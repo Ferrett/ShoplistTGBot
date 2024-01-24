@@ -1,18 +1,32 @@
 import telebot
+import sqlite3
 from telebot import types
+from datetime import datetime
+import json
 
-bot = telebot.TeleBot('6558187379:AAFQeAw0td96ht761lPdIw4x0ZVbUgNMS4I')
-shoplist = ['1', '2', '3']
+with open('config.json', 'r') as file:
+    data = json.load(file)
+
+bot = telebot.TeleBot(data['bot_token'])
 users = [123456789, 987654321]
+
 
 @bot.message_handler(commands=['start'])
 def start(message):
     liststr = 'Список:\n'
-    if len(shoplist) == 0:
+
+    conn = sqlite3.connect('db.sqlite')
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT 1 FROM Item LIMIT 1")
+    if cursor.fetchone() is None:
         liststr = 'Список пуст!'
     else:
-        for index, element in enumerate(shoplist, start=1):
-            liststr += f"— {element}\n"
+        cursor.execute(f"SELECT Name FROM Item")
+        names = cursor.fetchall()
+        liststr += '\n'.join(f"— {name[0]}" for name in names)
+    cursor.close()
+    conn.close()
+
     markup = types.ReplyKeyboardMarkup()
     btn = types.KeyboardButton('Обновить')
     markup.row(btn)
@@ -45,44 +59,73 @@ def on_add_to_list(message):
 def add_item(message):
     if message.text == 'Отмена':
         return start(message)
-    shoplist.extend(message.text.splitlines())
+
+    conn = sqlite3.connect('db.sqlite')
+    cursor = conn.cursor()
+    # Iterate over each line
+    for line in message.text.splitlines():
+        cursor.execute("INSERT INTO Item (Name, CreationDate) VALUES (?, ?)", (f'{line}', f'{datetime.now()}'))
+    conn.commit()
+    cursor.close()
+    conn.close()
     return start(message)
 
 
 def on_delete_from_list(message):
     markup = types.ReplyKeyboardMarkup()
-    delete_item_markup(message, markup)
-    bot.send_message(message.chat.id, 'Нажмите на товар, который хотите удалить', reply_markup=markup)
-    bot.register_next_step_handler(message, delete_item)
+    if delete_item_markup(message, markup):
+        bot.send_message(message.chat.id, 'Нажмите на товар, который хотите удалить', reply_markup=markup)
+        bot.register_next_step_handler(message, delete_item)
 
 
 def item_deleted_from_list(message):
     markup = types.ReplyKeyboardMarkup()
-    delete_item_markup(message, markup)
-    bot.send_message(message.chat.id, f'\'{message.text}\' - Удалён', reply_markup=markup)
-    bot.register_next_step_handler(message, delete_item)
+    if delete_item_markup(message, markup):
+        bot.send_message(message.chat.id, f'\'{message.text}\' - Удалён', reply_markup=markup)
+        bot.register_next_step_handler(message, delete_item)
 
 
 def delete_item_markup(message, markup):
-    if len(shoplist) == 0:
-        return start(message)
-    markup.row(types.KeyboardButton('Назад'))
-    for element in shoplist:
-        markup.row(types.KeyboardButton(element))
-    markup.row(types.KeyboardButton('Удалить всё'))
+    conn = sqlite3.connect('db.sqlite')
+    cursor = conn.cursor()
 
+    # Check if the 'Item' table is empty
+    cursor.execute("SELECT 1 FROM Item LIMIT 1")
+    val = cursor.fetchone()
+    if val is None:
+        start(message)
+    else:
+        cursor.execute("SELECT Name FROM Item")
+        names = cursor.fetchall()
+        markup.row(types.KeyboardButton('Назад'))
+        for name in names:
+            markup.row(types.KeyboardButton(name[0]))
+        markup.row(types.KeyboardButton('Удалить всё'))
+
+    cursor.close()
+    conn.close()
+    return val
 
 def delete_item(message):
+    conn = sqlite3.connect('db.sqlite')
+    cursor = conn.cursor()
+
     if message.text == 'Назад':
-        return start(message)
+        start(message)
     elif message.text == 'Удалить всё':
-        shoplist.clear()
-        return start(message)
-    elif any(item == message.text for item in shoplist):
-        shoplist.remove(message.text)
-        return item_deleted_from_list(message)
+        cursor.execute(f"DELETE FROM Item")
+        conn.commit()
+
+        start(message)
+    elif any(item[0] == message.text for item in cursor.execute("SELECT Name FROM Item").fetchall()):
+        cursor.execute(f"DELETE FROM Item where Name = '{message.text}'")
+        conn.commit()
+
+        item_deleted_from_list(message)
     else:
         bot.register_next_step_handler(message, delete_item)
+    cursor.close()
+    conn.close()
 
 
 @bot.message_handler()
