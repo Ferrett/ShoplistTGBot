@@ -8,11 +8,18 @@ with open('config.json', 'r') as file:
     data = json.load(file)
 
 bot = telebot.TeleBot(data['bot_token'])
-users = [123456789, 987654321]
+users = data['users']
 
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    if message.from_user.id in users:
+        main_menu(message)
+    else:
+        bot.send_message(message.chat.id, 'Unknown user')
+
+
+def main_menu(message):
     liststr = 'Список:\n'
 
     conn = sqlite3.connect('db.sqlite')
@@ -39,7 +46,7 @@ def start(message):
 
 def on_click(message):
     if message.text == 'Обновить':
-        return start(message)
+        return main_menu(message)
     elif message.text == 'Удалить':
         return on_delete_from_list(message)
     elif message.text == 'Добавить':
@@ -58,7 +65,7 @@ def on_add_to_list(message):
 
 def add_item(message):
     if message.text == 'Отмена':
-        return start(message)
+        return main_menu(message)
 
     conn = sqlite3.connect('db.sqlite')
     cursor = conn.cursor()
@@ -68,7 +75,7 @@ def add_item(message):
     conn.commit()
     cursor.close()
     conn.close()
-    return start(message)
+    return main_menu(message)
 
 
 def on_delete_from_list(message):
@@ -91,9 +98,9 @@ def delete_item_markup(message, markup):
 
     # Check if the 'Item' table is empty
     cursor.execute("SELECT 1 FROM Item LIMIT 1")
-    val = cursor.fetchone()
-    if val is None:
-        start(message)
+    is_table_empty = cursor.fetchone()
+    if is_table_empty is None:
+        main_menu(message)
     else:
         cursor.execute("SELECT Name FROM Item")
         names = cursor.fetchall()
@@ -104,19 +111,20 @@ def delete_item_markup(message, markup):
 
     cursor.close()
     conn.close()
-    return val
+    return is_table_empty
+
 
 def delete_item(message):
     conn = sqlite3.connect('db.sqlite')
     cursor = conn.cursor()
 
     if message.text == 'Назад':
-        start(message)
+        main_menu(message)
     elif message.text == 'Удалить всё':
         cursor.execute(f"DELETE FROM Item")
         conn.commit()
 
-        start(message)
+        main_menu(message)
     elif any(item[0] == message.text for item in cursor.execute("SELECT Name FROM Item").fetchall()):
         cursor.execute(f"DELETE FROM Item where Name = '{message.text}'")
         conn.commit()
@@ -129,8 +137,9 @@ def delete_item(message):
 
 
 @bot.message_handler()
-def info(message):
-    return start(message)
+def message_handler(message):
+    if message.from_user.id not in users:
+        bot.send_message(message.chat.id, 'Unknown user')
 
 
 bot.polling(none_stop=True)
